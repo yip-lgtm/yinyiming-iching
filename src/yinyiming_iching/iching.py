@@ -192,6 +192,44 @@ class YinyimingIChing:
 
         return {"is_chong": is_chong, "is_he": is_he, "summary": summary}
 
+    def analyze_key_lines(self) -> Dict:
+        """
+        返回關鍵爻列表（兼容用戶 v4.1 代碼接口）
+        每個爻: {position, type, weight}
+        """
+        dong = self.meihua["dongyao_position"]  # 1-6
+        line_type_map = {1: "子孫", 2: "妻財", 3: "兄弟", 4: "兄弟", 5: "妻財", 6: "官鬼"}
+        line_type = line_type_map.get(dong, "其他")
+
+        # 權重計算
+        bazi = self.bazi
+        day_gan = bazi["day"][0]
+        month_zhi = bazi["month"][1]
+        month_elem = ZHI_ELEM.get(month_zhi, "土")
+        base_weight = 3 if dong in [5, 6] else 2 if dong in [3, 4] else 1
+        if ELEMENT.get(day_gan) == month_elem:
+            base_weight += 1
+
+        # 納音加持
+        if line_type == "妻財":
+            if any(n in self.nayin for n in ["劍鋒金", "霹靂火"]):
+                base_weight += 10
+            elif any(n in self.nayin for n in ["白蠟金", "爐中火", "城頭土"]):
+                base_weight += 5
+        elif line_type == "兄弟":
+            if any(n in self.nayin for n in ["大海水", "澗下水", "長流水", "泉中水"]):
+                base_weight += 5
+            elif any(n in self.nayin for n in ["沙中金", "桑柘木"]):
+                base_weight += 3
+
+        return {
+            dong - 1: {
+                "position": dong,
+                "type": line_type,
+                "weight": base_weight,
+            }
+        }
+
     def analyze(self) -> Dict[str, Any]:
         bazi = self.bazi
         mh = self.meihua
@@ -222,6 +260,8 @@ class YinyimingIChing:
 
         he_info = self._analyze_he_chong()
 
+        current_hour = self.dt.hour
+
         # 納音分輕重（盲派實戰心法）
         # 劍鋒金、霹靂火 → 妻財加持最強（+10）
         # 白蠟金、爐中火、城頭土 → 妻財加持（+5）
@@ -239,42 +279,38 @@ class YinyimingIChing:
         elif any(n in self.nayin for n in ["沙中金", "桑柘木"]):
             nayin_brother_boost = 3
 
-        # 預測
+        # 預測（v5 邏輯，無 session filter — filter 由 predict_btc_5m() 做）
         direction = "VOLATILE / SIDEWAYS"
         confidence = 50
         reason = he_info["summary"]
 
-        # UP 條件（放寬）
         if line_type == "妻財" and weight >= 3:
             direction = "UP"
-            confidence = min(60 + weight + nayin_wealth_boost, 95)
+            confidence = min(65 + weight + nayin_wealth_boost, 95)
             reason = f"妻財{dong}爻動 + 權重{weight} + 納音{self.nayin}加持，資金流入信號強"
         elif weight >= 5:
             direction = "UP"
-            confidence = min(65, 95)
+            confidence = min(70, 95)
             reason = f"動爻權重{weight}，能量強，市場有機會順勢"
         elif line_type == "妻財" and cai_count >= 1:
             direction = "UP"
-            confidence = 58
+            confidence = 62
             reason = f"妻財藏干旺 + 動爻妻財位，資金信號"
         elif he_info["is_he"] and not he_info["is_chong"] and weight >= 2:
-            # 六合（合必求開）+ 權重不低 → 蓄勢向上
             direction = "UP"
-            confidence = 55
+            confidence = 60
             reason = f"六合格局（合必求開），蓄勢待發，權重{weight}"
-
-        # DOWN 條件
         elif line_type == "兄弟" and brother_count >= 2:
             direction = "DOWN"
-            confidence = min(55 + weight + nayin_brother_boost, 95)
+            confidence = min(60 + weight + nayin_brother_boost, 95)
             reason = f"兄弟{brother_count}個 + 動爻在兄弟位 + 納音{self.nayin}，波動/回調壓力"
         elif line_type == "兄弟" and brother_count >= 1:
             direction = "DOWN"
-            confidence = 52
+            confidence = 55
             reason = f"兄弟信號{brother_count}個 + 動爻兄弟位，波動"
         elif line_type == "官鬼":
             direction = "DOWN"
-            confidence = 55
+            confidence = 58
             reason = "官鬼爻動，回調/壓力信號明確"
         elif he_info["is_chong"] and he_info["is_he"]:
             direction = "VOLATILE"
@@ -301,6 +337,7 @@ class YinyimingIChing:
                 "dongyao_position": mh["dongyao_position"],
             },
             "nayin": self.nayin,
+            "current_hour_utc": current_hour,
             "analysis": {
                 "moving_line_type": line_type,
                 "moving_line_weight": weight,
@@ -317,7 +354,76 @@ class YinyimingIChing:
         }
 
     def predict_btc_5m(self) -> Dict:
-        return self.analyze()
+        """
+        v4.1 - 美國正段專用（UTC 13-21）
+        精準度同 v5 一樣，但多 ~800 個方向信號
+        """
+        key_lines = self.analyze_key_lines()
+        hechong = self._analyze_he_chong()
+        current_hour = self.dt.hour
+
+        # 美國正段定義
+        US_SESSION = list(range(13, 22))  # UTC 13:00 ~ 21:00
+
+        if current_hour not in US_SESSION:
+            return {
+                "datetime": self.dt.isoformat(),
+                "hexagram_lines": self.meihua["hexagram_lines"],
+                "moving_lines": [self.meihua["dongyao_idx"]],
+                "key_lines_analysis": key_lines,
+                "he_chong": hechong,
+                "nayin": self.nayin,
+                "current_hour_utc": current_hour,
+                "is_us_session": False,
+                "prediction": {
+                    "direction": "HOLD",
+                    "confidence": 20,
+                    "reason": f"非美國正段（UTC {current_hour}時），強制觀望",
+                    "polymarket_suggestion": "Polymarket BTC 5m 建議觀望",
+                },
+            }
+
+        # 計算關鍵權重
+        wealth_lines = [l for l in key_lines.values() if l["type"] == "妻財"]
+        brothers_lines = [l for l in key_lines.values() if l["type"] == "兄弟"]
+
+        wealth_weight = max([l["weight"] for l in wealth_lines], default=0)
+        brothers_weight = max([l["weight"] for l in brothers_lines], default=0)
+
+        # 預測邏輯
+        if wealth_weight >= 4 and brothers_weight <= 5:
+            direction = "UP"
+            confidence = min(52 + (wealth_weight - 4) * 5, 80)
+            if current_hour == 14:  # UTC 14:00（最佳時段）
+                confidence = min(confidence + 10, 85)
+            reason = f"美國段 + 妻財關鍵爻重（權重{wealth_weight}）"
+
+        elif brothers_weight >= 5 and wealth_weight <= 4:
+            direction = "DOWN"
+            confidence = min(48 + (brothers_weight - 5) * 5, 75)
+            reason = f"美國段 + 兄弟強（權重{brothers_weight}）"
+
+        else:
+            direction = "HOLD"
+            confidence = 40
+            reason = f"美國段但信號不明確（妻財{wealth_weight}/兄弟{brothers_weight}）"
+
+        return {
+            "datetime": self.dt.isoformat(),
+            "hexagram_lines": self.meihua["hexagram_lines"],
+            "moving_lines": [self.meihua["dongyao_idx"]],
+            "key_lines_analysis": key_lines,
+            "he_chong": hechong,
+            "nayin": self.nayin,
+            "current_hour_utc": current_hour,
+            "is_us_session": True,
+            "prediction": {
+                "direction": direction,
+                "confidence": confidence,
+                "reason": reason,
+                "polymarket_suggestion": f"Polymarket BTC 5m {direction} 參考",
+            },
+        }
 
 
 if __name__ == "__main__":
