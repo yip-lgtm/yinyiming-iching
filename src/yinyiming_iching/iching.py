@@ -355,8 +355,8 @@ class YinyimingIChing:
 
     def predict_btc_5m(self) -> Dict:
         """
-        v4.2 - 非對稱 Threshold（美國正段專用）
-        UP ≥4 | DOWN ≥6
+        v4.3 - 動爻深度加權版（美國正段 + 非對稱 Threshold）
+        動爻大幅提升對應爻權重，符合盲派「分輕重」原則
         """
         key_lines = self.analyze_key_lines()
         hechong = self._analyze_he_chong()
@@ -383,25 +383,34 @@ class YinyimingIChing:
                 },
             }
 
-        # 計算關鍵權重
+        # 計算基礎權重（analyze_key_lines 已含 NAYIN 加持）
         wealth_lines = [l for l in key_lines.values() if l["type"] == "妻財"]
         brothers_lines = [l for l in key_lines.values() if l["type"] == "兄弟"]
 
         wealth_weight = max([l["weight"] for l in wealth_lines], default=0)
         brothers_weight = max([l["weight"] for l in brothers_lines], default=0)
 
-        # 非對稱預測邏輯
+        # ========== 動爻加權（v4.3）==========
+        # moving bonus 只加成 confidence，唔改變方向閾值
+        dong = self.meihua["dongyao_position"]  # 1-6
+        moving_bonus = 0
+        if dong in [3, 4]:
+            moving_bonus = 3
+        elif dong in [5, 6]:
+            moving_bonus = 5
+
+        # ========== 非對稱預測邏輯（決策用原有權重） ==========
         if wealth_weight >= 4 and brothers_weight <= 5:
             direction = "UP"
-            confidence = min(52 + (wealth_weight - 4) * 5, 80)
-            if current_hour == 14:  # UTC 14:00 最佳時段加成
-                confidence = min(confidence + 10, 85)
-            reason = f"美國段 + 妻財關鍵爻重（權重{wealth_weight}）"
+            confidence = min(52 + (wealth_weight - 4) * 5 + moving_bonus, 90)
+            if current_hour == 14:  # UTC 14:00 最佳時段
+                confidence = min(confidence + 10, 95)
+            reason = f"美國段 + 妻財關鍵爻重（權重{wealth_weight}，動爻+{moving_bonus}）"
 
         elif brothers_weight >= 6 and wealth_weight <= 4:
             direction = "DOWN"
-            confidence = min(50 + (brothers_weight - 6) * 6, 78)
-            reason = f"美國段 + 兄弟強（權重{brothers_weight}）+ 沖妻財"
+            confidence = min(50 + (brothers_weight - 6) * 6 + moving_bonus, 85)
+            reason = f"美國段 + 兄弟強（權重{brothers_weight}，動爻+{moving_bonus}）"
 
         else:
             direction = "HOLD"
