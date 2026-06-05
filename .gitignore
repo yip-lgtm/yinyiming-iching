@@ -42,7 +42,7 @@ venv.bak/
 
 # Data
 data/btc_5m_history.csv
-data/*.csv
+# data/*.csv  # allow backtest CSVs
 !data/.gitkeep
 
 # Logs
