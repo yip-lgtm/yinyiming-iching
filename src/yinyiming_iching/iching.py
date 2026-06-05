@@ -355,8 +355,8 @@ class YinyimingIChing:
 
     def predict_btc_5m(self) -> Dict:
         """
-        v4.1 - 美國正段專用（UTC 13-21）
-        精準度同 v5 一樣，但多 ~800 個方向信號
+        v4.2 - 非對稱 Threshold（美國正段專用）
+        UP ≥4 | DOWN ≥6
         """
         key_lines = self.analyze_key_lines()
         hechong = self._analyze_he_chong()
@@ -390,18 +390,18 @@ class YinyimingIChing:
         wealth_weight = max([l["weight"] for l in wealth_lines], default=0)
         brothers_weight = max([l["weight"] for l in brothers_lines], default=0)
 
-        # 預測邏輯
+        # 非對稱預測邏輯
         if wealth_weight >= 4 and brothers_weight <= 5:
             direction = "UP"
             confidence = min(52 + (wealth_weight - 4) * 5, 80)
-            if current_hour == 14:  # UTC 14:00（最佳時段）
+            if current_hour == 14:  # UTC 14:00 最佳時段加成
                 confidence = min(confidence + 10, 85)
             reason = f"美國段 + 妻財關鍵爻重（權重{wealth_weight}）"
 
-        elif brothers_weight >= 5 and wealth_weight <= 4:
+        elif brothers_weight >= 6 and wealth_weight <= 4:
             direction = "DOWN"
-            confidence = min(48 + (brothers_weight - 5) * 5, 75)
-            reason = f"美國段 + 兄弟強（權重{brothers_weight}）"
+            confidence = min(50 + (brothers_weight - 6) * 6, 78)
+            reason = f"美國段 + 兄弟強（權重{brothers_weight}）+ 沖妻財"
 
         else:
             direction = "HOLD"
